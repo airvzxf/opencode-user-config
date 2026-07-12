@@ -1,0 +1,10 @@
+node_modules
+package.json
+bun.lock
+*.bak
+*.local
+opencode.json.local
+AGENTS.local.md
+opencode.jsonc
+.env
+out/

@@ -1,0 +1,25 @@
+
+In bad_script.sh line 7:
+read filename
+^--^ SC2162 (info): read without -r will mangle backslashes.
+
+
+In bad_script.sh line 10:
+if [ -f $filename ]; then
+        ^-------^ SC2086 (info): Double quote to prevent globbing and word splitting.
+
+Did you mean:
+if [ -f "$filename" ]; then
+
+
+In bad_script.sh line 17:
+current_date=`date`
+             ^----^ SC2006 (style): Use $(...) notation instead of legacy backticks `...`.
+
+Did you mean:
+current_date=$(date)
+
+For more information:
+  https://www.shellcheck.net/wiki/SC2086 -- Double quote to prevent globbing ...
+  https://www.shellcheck.net/wiki/SC2162 -- read without -r will mangle backs...
+  https://www.shellcheck.net/wiki/SC2006 -- Use $(...) notation instead of le...
