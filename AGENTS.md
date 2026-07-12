@@ -432,6 +432,76 @@ Note: the laptop runs Arch, this VPS runs Debian. The
 systemd-unit patterns (Debian uses the same systemd layout);
 just substitute `apt` for `pacman`/`yay` in any examples.
 
+## Onboarding a new host (Ubuntu laptop, fresh VPS, etc.)
+
+Three things must be in place on each host for the cross-host
+sync to actually work end-to-end:
+
+1. **`~/.config/opencode/opencode.json`** — present, byte-identical
+   to the canonical copy in this repo. The deploy step (see the
+   commit/PR for the bootstrap that introduces this repo) `cp`s
+   each tracked file from the cloned repo into place.
+
+2. **`~/.config/opencode/.env` (mode 0600)** — holds
+   `MINIMAX_API_KEY`, `ANTHROPIC_API_KEY`, and
+   `OPENCODE_EXPERIMENTAL_WORKSPACES=1`. **Not in the repo**;
+   per-host material. The canonical install/refresh path is
+   `scripts/install-opencode-env.sh` (also in this repo); pass
+   the keys inline or let the script prompt for them.
+
+3. **Env vars available to the opencode runtime** — depends on the
+   launch context:
+   - **CLI (`opencode run ...`) in an interactive shell** —
+     handled by the bashrc block that `install-opencode-env.sh`
+     appends to `~/.bashrc`. The block re-exports the three
+     vars from `.env` after bashrc's `case $- in *i*) ;; *) return
+     esac` guard passes. (opencode 1.17.18's CLI does **not**
+     auto-load `~/.config/opencode/.env`; you must explicitly
+     source it, which is what the bashrc block does.)
+   - **opencode-web as a systemd service** — handled by the drop-in
+     at `/etc/systemd/system/opencode-web.service.d/00-env.conf`.
+     Install it once via the canonical `devadmin` hop; see the
+     "opencode-web specifics" section below for the exact commands.
+   - **IDE-launched opencode** — depends on the IDE; some source
+     `~/.profile`, some don't. If it doesn't, run
+     `install-opencode-env.sh` and set the IDE's environment
+     manually to read from `.env`.
+
+### Why three layers?
+
+The env-template form in `opencode.json`
+(`"apiKey": "{env:MINIMAX_API_KEY}"`) is what keeps the literal
+token out of the public repo. But opencode's SDK only resolves
+`{env:...}` if the var is in the process environment **at the
+moment of the model call**, and opencode's three launch contexts
+(CLI in a shell, opencode-web as a systemd service, IDE-launched)
+each need the var set in their own way. That's why
+`install-opencode-env.sh` writes the three sources, and why the
+`MANIFEST` includes it.
+
+### `scripts/install-opencode-env.sh` cheat sheet
+
+```bash
+# Local install (interactive; prompts for missing keys):
+~/.config/opencode/scripts/install-opencode-env.sh
+
+# Non-interactive (CI, scripted onboarding):
+MINIMAX_API_KEY=sk-cp-... \
+ANTHROPIC_API_KEY=sk-cp-... \
+  ~/.config/opencode/scripts/install-opencode-env.sh
+
+# Idempotent re-run (safe — only rewrites .env when contents differ):
+~/.config/opencode/scripts/install-opencode-env.sh
+
+# Force a clean .env overwrite (e.g., after a key rotation):
+~/.config/opencode/scripts/install-opencode-env.sh --force
+```
+
+The script writes `~/.config/opencode/.env` (mode 0600) and
+appends the bashrc block. It does NOT touch the systemd drop-in
+(the drop-in requires devadmin sudo; do it once per host as
+documented in the opencode-web section).
+
 ## opencode-web specifics (VPS airvzxf)
 
 Authoritative notes for operating the `opencode-web` service
@@ -465,6 +535,31 @@ older guesses in this file or in third-party writeups.
      call silently 401s.
   3. **Provider API keys** — MiniMax (and any other LLM
      provider) auth happens in the model SDK call. See below.
+
+### Where the API keys live (post-bootstrap)
+
+The canonical install lays down three sources for the API keys,
+all kept in sync via `scripts/install-opencode-env.sh`:
+
+- **`~/.config/opencode/.env` (mode 0600)** — primary store.
+  Read by the bashrc block and the systemd drop-in.
+- **`/etc/systemd/system/opencode-web.service.d/00-env.conf`** —
+  systemd drop-in that exports the keys into the
+  `opencode-web.service` process. Install once per host via:
+
+  ```
+  ssh devadmin sudo -n mkdir -p /etc/systemd/system/opencode-web.service.d
+  printf '[Service]\nEnvironment="MINIMAX_API_KEY=<key>"\nEnvironment="ANTHROPIC_API_KEY=<key>"\n' \
+    | ssh devadmin "sudo -n tee /etc/systemd/system/opencode-web.service.d/00-env.conf >/dev/null"
+  ssh devadmin sudo -n systemctl daemon-reload
+  ssh devadmin sudo -n systemctl restart opencode-web.service
+  ```
+
+  (`install-opencode-env.sh` writes `.env` and the bashrc block
+  but does **not** touch the drop-in; the drop-in requires
+  devadmin sudo and is a per-host one-time install.)
+- **`~/.bashrc`** — appended env-loader block; re-exports the
+  three vars in interactive shells so `opencode run ...` works.
 
 ### URL pattern
 
