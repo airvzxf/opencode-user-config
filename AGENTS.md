@@ -434,50 +434,29 @@ just substitute `apt` for `pacman`/`yay` in any examples.
 
 ## Onboarding a new host (Ubuntu laptop, fresh VPS, etc.)
 
-Three things must be in place on each host for the cross-host
+Two things must be in place on each host for the cross-host
 sync to actually work end-to-end:
 
-1. **`~/.config/opencode/opencode.json`** — present, byte-identical
-   to the canonical copy in this repo. The deploy step (see the
-   commit/PR for the bootstrap that introduces this repo) `cp`s
-   each tracked file from the cloned repo into place.
+1. **Tracked files from this repo**, copied verbatim into
+   `~/.config/opencode/`:
+   - `AGENTS.md`, `MANIFEST`, `opencode.json`, `scripts/*`,
+     `skills/*`.
+   - The repo's `opencode.json` has the provider block but **no
+     `apiKey` field** -- it's a sanitized template. Each host
+     installs its own literal key there.
 
-2. **`~/.config/opencode/.env` (mode 0600)** — holds
-   `MINIMAX_API_KEY`, `ANTHROPIC_API_KEY`, and
-   `OPENCODE_EXPERIMENTAL_WORKSPACES=1`. **Not in the repo**;
-   per-host material. The canonical install/refresh path is
-   `scripts/install-opencode-env.sh` (also in this repo); pass
-   the keys inline or let the script prompt for them.
+2. **Per-host credentials**, populated by
+   `scripts/install-opencode-env.sh`:
+   - A literal `provider.minimax-coding-plan.options.apiKey`
+     inserted into `opencode.json` (so the opencode-web SPA path
+     can resolve the model and the CLI can authenticate).
+   - A mirror of the same key in
+     `~/.local/share/opencode/auth.json` (mode 0600), the
+     canonical opencode credential store; `opencode providers
+     list` shows it; the CLI falls back to it.
 
-3. **Env vars available to the opencode runtime** — depends on the
-   launch context:
-   - **CLI (`opencode run ...`) in an interactive shell** —
-     handled by the bashrc block that `install-opencode-env.sh`
-     appends to `~/.bashrc`. The block re-exports the three
-     vars from `.env` after bashrc's `case $- in *i*) ;; *) return
-     esac` guard passes. (opencode 1.17.18's CLI does **not**
-     auto-load `~/.config/opencode/.env`; you must explicitly
-     source it, which is what the bashrc block does.)
-   - **opencode-web as a systemd service** — handled by the drop-in
-     at `/etc/systemd/system/opencode-web.service.d/00-env.conf`.
-     Install it once via the canonical `devadmin` hop; see the
-     "opencode-web specifics" section below for the exact commands.
-   - **IDE-launched opencode** — depends on the IDE; some source
-     `~/.profile`, some don't. If it doesn't, run
-     `install-opencode-env.sh` and set the IDE's environment
-     manually to read from `.env`.
-
-### Why three layers?
-
-The env-template form in `opencode.json`
-(`"apiKey": "{env:MINIMAX_API_KEY}"`) is what keeps the literal
-token out of the public repo. But opencode's SDK only resolves
-`{env:...}` if the var is in the process environment **at the
-moment of the model call**, and opencode's three launch contexts
-(CLI in a shell, opencode-web as a systemd service, IDE-launched)
-each need the var set in their own way. That's why
-`install-opencode-env.sh` writes the three sources, and why the
-`MANIFEST` includes it.
+See "MiniMax auth -- two locations, both required" below for the
+why-both explanation.
 
 ### `scripts/install-opencode-env.sh` cheat sheet
 
@@ -501,6 +480,38 @@ The script writes `~/.config/opencode/.env` (mode 0600) and
 appends the bashrc block. It does NOT touch the systemd drop-in
 (the drop-in requires devadmin sudo; do it once per host as
 documented in the opencode-web section).
+
+## MiniMax auth -- two locations, both required
+
+The MiniMax Token Plan key (`sk-cp-...`) lives in TWO
+per-host locations after `scripts/install-opencode-env.sh` runs:
+
+1. **`~/.config/opencode/opencode.json`** under
+   `provider.minimax-coding-plan.options.apiKey` -- the **literal**
+   key. This file is tracked by this repo with the `apiKey` field
+   removed (sanitized template); each host inserts the literal
+   value via `install-opencode-env.sh`.
+   - The CLI (`opencode run ...`) reads this directly.
+   - **The opencode-web SPA on 1.17.18 also reads this.** The SPA
+     path does NOT pick up the key from `auth.json`; without a
+     literal `apiKey` in `opencode.json`, the SPA path emits
+     `SessionRunnerModel.ModelUnavailableError: Model unavailable:
+     minimax-coding-plan/MiniMax-M3` and returns 0 tokens. So
+     `opencode.json`'s apiKey is what the browser session depends
+     on.
+
+2. **`~/.local/share/opencode/auth.json`** under
+   `minimax-coding-plan.key` -- canonical opencode credential
+   store, mode 0600, never committed. Populated by
+   `install-opencode-env.sh` with the same key.
+   - `opencode providers list` shows it.
+   - Acts as a CLI fallback if you remove the literal `apiKey`
+     from `opencode.json` (CLI works; SPA breaks -- see above).
+
+Why two locations. In opencode 1.17.18 the SPA's model-resolution
+path reads only `opencode.json`'s `provider.X.options.apiKey`; the
+CLI's provider loader reads both. Keeping both in sync is the
+safest ground.
 
 ## opencode-web specifics (VPS airvzxf)
 

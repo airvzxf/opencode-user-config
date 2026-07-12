@@ -1,48 +1,71 @@
 #!/usr/bin/env bash
 #
-# Bootstrap the per-host environment that ~/.config/opencode/
-# needs to function on a fresh machine. Local to the host running
-# this script (does NOT touch other machines or any remote system).
+# Bootstrap the per-host credentials that opencode needs to talk
+# to a MiniMax Token Plan endpoint. Local to the host running
+# this script. Does NOT touch other machines or any remote system.
 #
-# What this does:
-#   1. Writes ~/.config/opencode/.env (mode 0600) with
-#      MINIMAX_API_KEY, ANTHROPIC_API_KEY, OPENCODE_EXPERIMENTAL_WORKSPACES,
-#      sourcing them from $MINIMAX_API_KEY / $ANTHROPIC_API_KEY in
-#      the calling shell. If unset and stdin is a tty, prompts
-#      interactively.
-#   2. Appends a small block to ~/.bashrc that, in interactive
-#      shells, re-exports the same vars from .env so the CLI
-#      (opencode run ...) picks them up.
+# Background
+# ----------
+# opencode loads its config from two locations:
 #
-# What this does NOT do (handled separately):
-#   * The systemd drop-in for opencode-web lives at
-#     /etc/systemd/system/opencode-web.service.d/00-env.conf
-#     and requires devadmin sudo. See AGENTS.md "opencode-web
-#     specifics (airvzxf VPS)" for the canonical install commands.
-#     It must be applied once per host that runs opencode-web
-#     as a systemd service; the bashrc block in step 2 only
-#     covers interactive-shell CLI invocations.
+#   1. ~/.config/opencode/opencode.json  -- provider options
+#      (baseURL, npm package), commands, MCP servers, model list.
+#      This file is tracked by airvzxf/opencode-user-config.
 #
-# Usage:
-#   install-opencode-env.sh                # interactive; prompts for missing keys
-#   MINIMAX_API_KEY=sk-cp-... \
-#     ANTHROPIC_API_KEY=sk-cp-... \
-#     install-opencode-env.sh              # non-interactive
-#   install-opencode-env.sh --noninteractive --skip-prompt  # .env untouched if exists
+#   2. ~/.local/share/opencode/auth.json -- per-host credentials
+#      (one entry per provider). Mode 0600; never committed.
 #
-# Idempotent: safe to run multiple times. The bashrc block has an
-# append-once guard. The .env is rewritten only when --force is
-# passed or when the existing file's content differs.
+# The repo's opencode.json ships WITHOUT apiKey. This script asks
+# for the MiniMax Token Plan key once, then writes it to BOTH
+# locations so the key is usable from every launch context:
 #
-# Exit codes:
+#   * ~/.config/opencode/opencode.json  -- the literal apiKey field.
+#     This is what opencode-web uses on the SPA. Has to be there for
+#     browser-based sessions to work; if you skip this, the SPA hits
+#     "Model unavailable" on opencode-web 1.17.18.
+#
+#   * ~/.local/share/opencode/auth.json -- the canonical credential
+#     store. Populated with the same key. opencode providers list
+#     shows it; `opencode run` reads it as a fallback.
+#
+# Why both
+# --------
+# * The CLI works with EITHER source -- opencode's provider loader
+#   reads the literal apiKey field, then falls back to auth.json.
+# * The opencode-web SPA in 1.17.18 does NOT pick up auth.json
+#   reliably for the SPA model-resolution path -- it only honours
+#   the literal apiKey in opencode.json. This is empirically
+#   verified; see AGENTS.md "MiniMax auth -- two locations" for
+#   the failing-session evidence.
+#
+# What this does NOT do
+# ---------------------
+# * Does not touch /etc/opencode-web.env (root-owned) or any
+#   systemd drop-in. Those are only relevant if you also need
+#   the opencode-web service to authenticate to CF Access on
+#   startup; for our deployment CF Access handles it.
+# * Does NOT touch ~/.bashrc. The literal key in opencode.json
+#   works for both interactive and non-interactive shells.
+#
+# Usage
+# -----
+#   install-opencode-env.sh                           # interactive
+#   MINIMAX_API_KEY=sk-cp-... install-opencode-env.sh # non-interactive
+#
+# Idempotent: safe to run multiple times. Skips writes when the
+# existing values match.
+#
+# Exit codes
+# ----------
 #   0  success
 #   1  invalid argument
 #   2  prerequisites missing
 #   4  user aborted at the prompt
 #
-# Requirements:
+# Requirements
+# ------------
 #   * bash 4+
-#   * HOME set
+#   * python3
 
 set -euo pipefail
 
@@ -52,7 +75,6 @@ usage() {
 }
 
 MINIMAX_API_KEY="${MINIMAX_API_KEY:-}"
-ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
 NONINTERACTIVE=0
 FORCE=0
 
@@ -75,9 +97,9 @@ if [[ -z "$HOME" ]]; then
 fi
 
 CFG_DIR="$HOME/.config/opencode"
-ENV_FILE="$CFG_DIR/.env"
-
-# --- prompt for missing keys (if not in env) ---
+OPENCODE_JSON="$CFG_DIR/opencode.json"
+STATE_DIR="$HOME/.local/share/opencode"
+AUTH_JSON="$STATE_DIR/auth.json"
 
 prompt_for_key() {
     local prompt="$1"
@@ -95,101 +117,132 @@ prompt_for_key() {
     printf '%s' "$value"
 }
 
-if [[ -z "$MINIMAX_API_KEY" ]] && [[ -r "$ENV_FILE" ]]; then
-    MINIMAX_API_KEY="$(grep -E '^MINIMAX_API_KEY=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+if [[ -z "$MINIMAX_API_KEY" ]] && [[ -r "$AUTH_JSON" ]]; then
+    existing="$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$AUTH_JSON'))
+    print(d.get('minimax-coding-plan', {}).get('key', ''))
+except Exception:
+    pass
+")"
+    if [[ -n "$existing" ]]; then
+        MINIMAX_API_KEY="$existing"
+    fi
 fi
+
+if [[ -z "$MINIMAX_API_KEY" ]] && [[ -r "$OPENCODE_JSON" ]]; then
+    existing="$(python3 -c "
+import json
+try:
+    d = json.load(open('$OPENCODE_JSON'))
+    print(d.get('provider', {}).get('minimax-coding-plan', {}).get('options', {}).get('apiKey', ''))
+except Exception:
+    pass
+")"
+    if [[ -n "$existing" ]] && [[ "$existing" != "{env:MINIMAX_API_KEY}" ]]; then
+        MINIMAX_API_KEY="$existing"
+    fi
+fi
+
 if [[ -z "$MINIMAX_API_KEY" ]]; then
-    MINIMAX_API_KEY="$(prompt_for_key 'Enter MINIMAX_API_KEY: ')"
+    MINIMAX_API_KEY="$(prompt_for_key 'Enter MINIMAX_API_KEY (MiniMax Token Plan, sk-cp-...): ')"
 fi
 
-if [[ -z "$ANTHROPIC_API_KEY" ]] && [[ -r "$ENV_FILE" ]]; then
-    ANTHROPIC_API_KEY="$(grep -E '^ANTHROPIC_API_KEY=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
-fi
-# Default ANTHROPIC_API_KEY to MINIMAX_API_KEY — Token Plan keys are
-# interchangeable across the two vars on MiniMax.
-if [[ -z "$ANTHROPIC_API_KEY" ]]; then
-    ANTHROPIC_API_KEY="$MINIMAX_API_KEY"
+echo "key length: ${#MINIMAX_API_KEY}"
+if [[ ${#MINIMAX_API_KEY} -lt 50 ]]; then
+    echo "warning: that key looks unusually short; double-check before continuing"
 fi
 
-# --- 1. write ~/.config/opencode/.env (mode 0600) ---
+# --- 1. write ~/.config/opencode/opencode.json (literal apiKey) ---
 
-NEW_ENV_CONTENT="MINIMAX_API_KEY=$MINIMAX_API_KEY
-ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
-OPENCODE_EXPERIMENTAL_WORKSPACES=1"
-
+mkdir -p "$CFG_DIR"
 NEEDS_WRITE=1
-if [[ $FORCE -eq 0 ]] && [[ -r "$ENV_FILE" ]]; then
-    EXISTING="$(cat "$ENV_FILE")"
-    if [[ "$EXISTING" == "$NEW_ENV_CONTENT" ]]; then
+if [[ $FORCE -eq 0 ]] && [[ -r "$OPENCODE_JSON" ]]; then
+    existing="$(python3 -c "
+import json
+try:
+    d = json.load(open('$OPENCODE_JSON'))
+    k = d.get('provider', {}).get('minimax-coding-plan', {}).get('options', {}).get('apiKey', '')
+    print(k)
+except Exception:
+    pass
+")"
+    if [[ "$existing" == "$MINIMAX_API_KEY" ]]; then
         NEEDS_WRITE=0
     fi
 fi
 
 if [[ $NEEDS_WRITE -eq 1 ]]; then
-    mkdir -p "$CFG_DIR"
+    if [[ ! -r "$OPENCODE_JSON" ]]; then
+        echo "warning: $OPENCODE_JSON does not exist; bootstrap from the repo first:"
+        echo "         cp /path/to/opencode-user-config/opencode.json $OPENCODE_JSON"
+        exit 2
+    fi
+    python3 - <<PYEOF
+import json
+p = "$OPENCODE_JSON"
+d = json.load(open(p))
+prov = d.setdefault("provider", {})
+mc = prov.setdefault("minimax-coding-plan", {})
+opts = mc.setdefault("options", {})
+opts["apiKey"] = "$MINIMAX_API_KEY"
+opts.setdefault("baseURL", "https://api.minimax.io/anthropic/v1")
+mc.setdefault("npm", "@ai-sdk/anthropic")
+mc.setdefault("name", "MiniMax Token Plan")
+mc.setdefault("models", {
+    "MiniMax-M3": {"name": "MiniMax M3"},
+    "MiniMax-M2.7": {"name": "MiniMax M2.7"},
+})
+d.pop("shell", None)
+json.dump(d, open(p, "w"), indent=2)
+PYEOF
+    echo "wrote $OPENCODE_JSON (literal apiKey)"
+else
+    echo "$OPENCODE_JSON already has this key, skipping (pass --force to overwrite)"
+fi
+
+# --- 2. write ~/.local/share/opencode/auth.json (mode 0600) ---
+
+mkdir -p "$STATE_DIR"
+NEEDS_WRITE=1
+if [[ $FORCE -eq 0 ]] && [[ -r "$AUTH_JSON" ]]; then
+    existing="$(python3 -c "
+import json
+try:
+    d = json.load(open('$AUTH_JSON'))
+    print(d.get('minimax-coding-plan', {}).get('key', ''))
+except Exception:
+    pass
+")"
+    if [[ "$existing" == "$MINIMAX_API_KEY" ]]; then
+        NEEDS_WRITE=0
+    fi
+fi
+
+if [[ $NEEDS_WRITE -eq 1 ]]; then
     umask 077
-    cat > "$ENV_FILE" <<EOF
-# OpenCode MiniMax credentials. mode 0600; never committed.
-# opencode 1.17.18's CLI does NOT auto-load this file; the env-template
-# form in opencode.json (apiKey: "{env:MINIMAX_API_KEY}") requires
-# these vars in the shell environment. See ~/.bashrc (interactive
-# shells) and /etc/systemd/system/opencode-web.service.d/00-env.conf
-# (the opencode-web service) for the per-invocation loaders.
-$NEW_ENV_CONTENT
-EOF
-    chmod 0600 "$ENV_FILE"
-    echo "wrote $ENV_FILE (mode 0600)"
+    python3 - <<PYEOF
+import json, os, stat
+p = "$AUTH_JSON"
+d = {}
+if os.path.exists(p):
+    try: d = json.load(open(p))
+    except Exception: pass
+d["minimax-coding-plan"] = {"type": "api", "key": "$MINIMAX_API_KEY"}
+json.dump(d, open(p, "w"), indent=2)
+os.chmod(p, 0o600)
+PYEOF
+    chmod 0600 "$AUTH_JSON"
+    echo "wrote $AUTH_JSON (mode 0600)"
 else
-    echo "$ENV_FILE already up to date, skipping (pass --force to overwrite)"
-fi
-
-# --- 2. append bashrc block (once) ---
-
-BASHRC="${HOME}/.bashrc"
-MARKER='OPENCODE USER CONFIG — env loader'
-
-if [[ ! -r "$BASHRC" ]]; then
-    echo "info: $BASHRC does not exist yet; skipping bashrc block" >&2
-    echo "bootstrap complete: only .env written"
-    exit 0
-fi
-
-if grep -qF "$MARKER" "$BASHRC"; then
-    echo "$BASHRC: env-loader block already present, skipping"
-else
-    cat >> "$BASHRC" <<EOF
-
-# >>> $MARKER (managed by scripts/install-opencode-env.sh) >>>
-# opencode 1.17.18's CLI does not auto-load ~/.config/opencode/.env; the
-# env-template form in opencode.json (apiKey: "{env:MINIMAX_API_KEY}")
-# requires these vars in the shell environment. This block runs only
-# in interactive shells (most .bashrc configs return early on
-# non-interactive invocations, which is fine — those use the
-# systemd drop-in instead).
-_minimax_env="\$HOME/.config/opencode/.env"
-if [[ -f "\$_minimax_env" && -r "\$_minimax_env" ]]; then
-    eval "\$(
-        grep -E '^(MINIMAX_API_KEY|ANTHROPIC_API_KEY|OPENCODE_EXPERIMENTAL_WORKSPACES)=' \
-            "\$_minimax_env" 2>/dev/null | \\
-        while IFS='=' read -r k v; do
-            case "\$k" in
-                MINIMAX_API_KEY|ANTHROPIC_API_KEY|OPENCODE_EXPERIMENTAL_WORKSPACES) \\
-                    printf 'export %s=%q\\n' "\$k" "\$v" ;;
-            esac
-        done
-    )" 2>/dev/null
-fi
-unset _minimax_env
-# <<< OPENCODE USER CONFIG <<<
-EOF
-    echo "appended env-loader block to $BASHRC"
+    echo "$AUTH_JSON already has this key, skipping"
 fi
 
 echo
 echo "Bootstrap complete:"
-echo "  - $ENV_FILE (mode 0600)"
-echo "  - $BASHRC (env-loader block, interactive shells only)"
+echo "  - $OPENCODE_JSON (literal apiKey)"
+echo "  - $AUTH_JSON (mode 0600, per-host credential store)"
 echo
-echo "For the opencode-web service, install the systemd drop-in:"
-echo "  /etc/systemd/system/opencode-web.service.d/00-env.conf"
-echo "  (requires devadmin sudo; see AGENTS.md for the canonical commands)"
+echo "Verify with:"
+echo "  /usr/bin/opencode run 'say PONG'"

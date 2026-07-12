@@ -1,23 +1,50 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "cloudflare": { "type": "remote", "url": "https://mcp.cloudflare.com/mcp", "enabled": true, "oauth": {} },
-    "cloudflare-docs": { "type": "remote", "url": "https://docs.mcp.cloudflare.com/mcp", "enabled": true },
-    "cloudflare-bindings": { "type": "remote", "url": "https://bindings.mcp.cloudflare.com/mcp", "enabled": true, "oauth": {} },
-    "cloudflare-builds": { "type": "remote", "url": "https://builds.mcp.cloudflare.com/mcp", "enabled": true, "oauth": {} },
-    "cloudflare-observability": { "type": "remote", "url": "https://observability.mcp.cloudflare.com/mcp", "enabled": true, "oauth": {} }
+    "cloudflare": {
+      "type": "remote",
+      "url": "https://mcp.cloudflare.com/mcp",
+      "enabled": true,
+      "oauth": {}
+    },
+    "cloudflare-docs": {
+      "type": "remote",
+      "url": "https://docs.mcp.cloudflare.com/mcp",
+      "enabled": true
+    },
+    "cloudflare-bindings": {
+      "type": "remote",
+      "url": "https://bindings.mcp.cloudflare.com/mcp",
+      "enabled": true,
+      "oauth": {}
+    },
+    "cloudflare-builds": {
+      "type": "remote",
+      "url": "https://builds.mcp.cloudflare.com/mcp",
+      "enabled": true,
+      "oauth": {}
+    },
+    "cloudflare-observability": {
+      "type": "remote",
+      "url": "https://observability.mcp.cloudflare.com/mcp",
+      "enabled": true,
+      "oauth": {}
+    }
   },
   "provider": {
     "minimax-coding-plan": {
       "npm": "@ai-sdk/anthropic",
       "name": "MiniMax Token Plan",
       "options": {
-        "baseURL": "https://api.minimax.io/anthropic/v1",
-        "apiKey": "{env:MINIMAX_API_KEY}"
+        "baseURL": "https://api.minimax.io/anthropic/v1"
       },
       "models": {
-        "MiniMax-M3": { "name": "MiniMax M3" },
-        "MiniMax-M2.7": { "name": "MiniMax M2.7" }
+        "MiniMax-M3": {
+          "name": "MiniMax M3"
+        },
+        "MiniMax-M2.7": {
+          "name": "MiniMax M2.7"
+        }
       }
     }
   },
@@ -28,7 +55,7 @@
     },
     "pr-wait": {
       "description": "Wait for a GitHub PR's CI and Copilot review, then continue the PR workflow.",
-      "template": "Run `~/.config/opencode/scripts/gh-pr-wait.sh $ARGUMENTS` and read the verdict block. Follow the GitHub pull request workflow in AGENTS.md: if the script reports a real review with substantive comments, fetch them with `gh api /repos/<owner>/<repo>/pulls/<N>/comments` and `gh pr view <N> --json reviews`, evaluate, and apply the valuable ones as additional commits (then re-run this command); if Copilot is quota-exhausted, leave a brief PR comment acknowledging it; if CI failed or Copilot requested changes, fix and push follow-up commits (then re-run); if green and approved (or quota-exhausted), squash-merge with `gh pr merge <N> --squash --delete-branch` and verify the linked issue is closed — but only if `gh-project-classify.sh` returned OWNER (exit 0). If it returned FORK (exit 10), stop after the PR is approved and hand the merge to the upstream maintainer; do NOT run `gh pr merge`. Do not re-implement the polling loop yourself; the script is the single source of truth for that."
+      "template": "Run `~/.config/opencode/scripts/gh-pr-wait.sh $ARGUMENTS` and read the verdict block. Follow the GitHub pull request workflow in AGENTS.md: if the script reports a real review with substantive comments, fetch them with `gh api /repos/<owner>/<repo>/pulls/<N>/comments` and `gh pr view <N> --json reviews`, evaluate, and apply the valuable ones as additional commits (then re-run this command); if Copilot is quota-exhausted, leave a brief PR comment acknowledging it; if CI failed or Copilot requested changes, fix and push follow-up commits (then re-run); if green and approved (or quota-exhausted), squash-merge with `gh pr merge <N> --squash --delete-branch` and verify the linked issue is closed \u2014 but only if `gh-project-classify.sh` returned OWNER (exit 0). If it returned FORK (exit 10), stop after the PR is approved and hand the merge to the upstream maintainer; do NOT run `gh pr merge`. Do not re-implement the polling loop yourself; the script is the single source of truth for that."
     }
   }
 }
