@@ -1,0 +1,16 @@
+AGENTS.md
+opencode.json
+scripts/check-sync.sh
+scripts/gh-default-branch.sh
+scripts/gh-project-classify.sh
+scripts/gh-pr-resolve-thread.sh
+scripts/gh-pr-wait.sh
+skills/arch_linux/SKILL.md
+skills/bash_validation/SKILL.md
+skills/bash_validation/examples/bad_script.sh
+skills/bash_validation/examples/good_script.sh
+skills/bash_validation/examples/output_example.txt
+skills/core_principles/SKILL.md
+skills/github_pr_workflow/SKILL.md
+skills/rust/SKILL.md
+skills/sync_check/SKILL.md
